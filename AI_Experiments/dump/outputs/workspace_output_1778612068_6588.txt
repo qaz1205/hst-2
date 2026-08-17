@@ -1,0 +1,8 @@
+stacked shape: torch.Size([2, 256, 3])
+stacked has inf: True
+stacked min/max: 0.0 inf
+ld has inf: False
+rd has inf: True
+stacked_clean has inf: False
+rel_net output with clean input has NaN: False
+rel_net output min/max: -1.1005802154541016 1.3083101511001587

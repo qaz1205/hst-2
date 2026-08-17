@@ -1,0 +1,4 @@
+All imports OK
+Model created OK
+Model type: <class 'modeling_io.IoForCausalLM'>
+MRO: ['IoForCausalLM', 'IoPreTrainedModel', 'PreTrainedModel', 'Module', 'EmbeddingAccessMixin', 'ModuleUtilsMixin', 'PushToHubMixin', 'PeftAdapterMixin', 'object']

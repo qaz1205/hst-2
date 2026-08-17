@@ -1,0 +1,15 @@
+Downloading frozenlist-1.8.0-cp311-cp311-manylinux1_x86_64.manylinux_2_28_x86_64.manylinux_2_5_x86_64.whl (231 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 231.1/231.1 kB 493.1 MB/s eta 0:00:00
+Downloading multidict-6.7.1-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (246 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 246.3/246.3 kB 443.5 MB/s eta 0:00:00
+Downloading propcache-0.5.2-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (58 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 58.9/58.9 kB 372.4 MB/s eta 0:00:00
+Downloading six-1.17.0-py2.py3-none-any.whl (11 kB)
+Downloading yarl-1.23.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl (102 kB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 102.7/102.7 kB 403.6 MB/s eta 0:00:00
+Installing collected packages: pytz, pydub, nvidia-cusparselt-cu13, mpmath, cuda-toolkit, xxhash, websockets, tzdata, triton, tqdm, tomlkit, sympy, six, shellingham, semantic-version, safetensors, ruff, regex, pyyaml, pyparsing, pyarrow, propcache, orjson, nvidia-nvtx, nvidia-nvshmem-cu13, nvidia-nvjitlink, nvidia-nccl-cu13, nvidia-curand, nvidia-cufile, nvidia-cuda-runtime, nvidia-cuda-nvrtc, nvidia-cuda-cupti, nvidia-cublas, numpy, networkx, narwhals, multidict, markupsafe, kiwisolver, importlib-resources, hf-xet, fsspec, frozenlist, fonttools, filelock, ffmpy, dill, cycler, cuda-pathfinder, annotated-doc, aiohappyeyeballs, aiofiles, yarl, tiktoken, python-dateutil, nvidia-cusparse, nvidia-cufft, nvidia-cudnn-cu13, multiprocess, jinja2, huggingface_hub, cuda-bindings, contourpy, aiosignal, typer, tokenizers, pandas, nvidia-cusolver, matplotlib, gradio-client, aiohttp, transformers, altair, torch, gradio, datasets
+ERROR: Could not install packages due to an OSError: [Errno 28] No space left on device
+
+
+[notice] A new release of pip is available: 24.0 -> 26.1.1
+[notice] To update, run: pip install --upgrade pip

@@ -1,0 +1,10 @@
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 1.2/1.2 MB 276.0 MB/s eta 0:00:00
+Downloading nvidia_curand-10.4.0.35-py3-none-manylinux_2_27_x86_64.whl (59.5 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 59.5/59.5 MB 165.5 MB/s eta 0:00:00
+Downloading nvidia_cusolver-12.0.4.66-py3-none-manylinux_2_27_x86_64.whl (200.9 MB)
+ERROR: Could not install packages due to an OSError: [Errno 28] No space left on device
+
+   ━                                        6.7/200.9 MB 187.6 MB/s eta 0:00:02
+
+[notice] A new release of pip is available: 24.0 -> 26.1.1
+[notice] To update, run: pip install --upgrade pip

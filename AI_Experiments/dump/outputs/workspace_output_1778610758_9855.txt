@@ -1,0 +1,4 @@
+CIFScalar methods: ['get']
+CIFScalar.get(): 0.9
+CIFState methods: ['set_dynamic', 'set_static', 'test']
+CIFState.test(lambda x: x > 0.5): False

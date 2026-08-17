@@ -1,0 +1,35 @@
+IoForCausalLM has generative capabilities, as `prepare_inputs_for_generation` is explicitly defined. However, it doesn't directly inherit from `GenerationMixin`. From 👉v4.50👈 onwards, `PreTrainedModel` will NOT inherit from `GenerationMixin`, and this model will lose the ability to call `generate` and other related functions.
+  - If you're using `trust_remote_code=True`, you can get rid of this warning by loading the model with an auto class. See https://huggingface.co/docs/transformers/en/model_doc/auto#auto-classes
+  - If you are the owner of the model architecture code, please modify your model class such that it inherits from `GenerationMixin` (after `PreTrainedModel`, otherwise you'll get an exception).
+  - If you are not the owner of the model architecture class, please contact the model code owner to update it.
+IoForCausalLM has generative capabilities, as `prepare_inputs_for_generation` is explicitly defined. However, it doesn't directly inherit from `GenerationMixin`. From 👉v4.50👈 onwards, `PreTrainedModel` will NOT inherit from `GenerationMixin`, and this model will lose the ability to call `generate` and other related functions.
+  - If you're using `trust_remote_code=True`, you can get rid of this warning by loading the model with an auto class. See https://huggingface.co/docs/transformers/en/model_doc/auto#auto-classes
+  - If you are the owner of the model architecture code, please modify your model class such that it inherits from `GenerationMixin` (after `PreTrainedModel`, otherwise you'll get an exception).
+  - If you are not the owner of the model architecture class, please contact the model code owner to update it.
+IoForCausalLM has generative capabilities, as `prepare_inputs_for_generation` is explicitly defined. However, it doesn't directly inherit from `GenerationMixin`. From 👉v4.50👈 onwards, `PreTrainedModel` will NOT inherit from `GenerationMixin`, and this model will lose the ability to call `generate` and other related functions.
+  - If you're using `trust_remote_code=True`, you can get rid of this warning by loading the model with an auto class. See https://huggingface.co/docs/transformers/en/model_doc/auto#auto-classes
+  - If you are the owner of the model architecture code, please modify your model class such that it inherits from `GenerationMixin` (after `PreTrainedModel`, otherwise you'll get an exception).
+  - If you are not the owner of the model architecture class, please contact the model code owner to update it.
+Traceback (most recent call last):
+  File "<string>", line 38, in <module>
+  File "/usr/local/lib/python3.11/site-packages/transformers/modeling_utils.py", line 4085, in save_pretrained
+    raise RuntimeError(
+RuntimeError: The weights trying to be saved contained shared tensors [{'lm_head.weight', 'model.embedding.emb.weight'}] that are mismatching the transformers base configuration. Try saving using `safe_serialization=False`, setting the `_dynamic_tied_weights_keys` attribute for affected modules, or remove this tensor sharing.
+=== Test 1: Model creation ===
+Model created OK
+
+=== Test 2: Forward pass with labels ===
+Loss: nan
+Logits shape: torch.Size([2, 256, 50257])
+
+=== Test 3: Forward pass without labels ===
+Logits shape (no labels): torch.Size([2, 256, 50257])
+
+=== Test 4: generate_draft ===
+Generated tokens: [1, 2, 3, 28296, 7891, 11672, 41024, 44511]
+
+=== Test 5: generate (HuggingFace compatible) ===
+Generated IDs shape: torch.Size([1, 8])
+Generated IDs: [1, 2, 3, 39287, 13579, 35986, 32460, 11212]
+
+=== Test 6: save_pretrained ===

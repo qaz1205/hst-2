@@ -1,0 +1,10 @@
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.2/2.2 MB 191.9 MB/s eta 0:00:00
+Downloading nvidia_cufft-12.0.0.61-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (214.1 MB)
+   ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 214.1/214.1 MB 176.5 MB/s eta 0:00:00
+Downloading nvidia_cufile-1.15.1.6-py3-none-manylinux2014_x86_64.manylinux_2_17_x86_64.whl (1.2 MB)
+ERROR: Could not install packages due to an OSError: [Errno 28] No space left on device
+
+   ━━━━━━━━━━━━━━━━━━━━━━                   0.7/1.2 MB 226.5 MB/s eta 0:00:01
+
+[notice] A new release of pip is available: 24.0 -> 26.1.1
+[notice] To update, run: pip install --upgrade pip

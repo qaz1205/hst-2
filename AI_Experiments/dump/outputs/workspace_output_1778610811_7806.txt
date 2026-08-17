@@ -1,0 +1,3 @@
+Has _init_weights: True
+save_pretrained ERROR: The weights trying to be saved contained shared tensors [{'lm_head.weight', 'model.embedding.emb.weight'}] that are mismatching the transformers base configuration. Try saving using `safe_serialization=False`, setting the `_dynamic_tied_weights_keys` attribute for affected modules, or remove this tensor sharing.
+from_pretrained ERROR: Error no file named pytorch_model.bin, model.safetensors, tf_model.h5, model.ckpt.index or flax_model.msgpack found in directory /tmp/test_io.

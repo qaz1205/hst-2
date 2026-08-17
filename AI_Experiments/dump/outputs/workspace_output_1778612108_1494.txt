@@ -1,0 +1,52 @@
+IoForCausalLM has generative capabilities, as `prepare_inputs_for_generation` is explicitly defined. However, it doesn't directly inherit from `GenerationMixin`. From 👉v4.50👈 onwards, `PreTrainedModel` will NOT inherit from `GenerationMixin`, and this model will lose the ability to call `generate` and other related functions.
+  - If you're using `trust_remote_code=True`, you can get rid of this warning by loading the model with an auto class. See https://huggingface.co/docs/transformers/en/model_doc/auto#auto-classes
+  - If you are the owner of the model architecture code, please modify your model class such that it inherits from `GenerationMixin` (after `PreTrainedModel`, otherwise you'll get an exception).
+  - If you are not the owner of the model architecture class, please contact the model code owner to update it.
+IoModel has generative capabilities, as `prepare_inputs_for_generation` is explicitly defined. However, it doesn't directly inherit from `GenerationMixin`. From 👉v4.50👈 onwards, `PreTrainedModel` will NOT inherit from `GenerationMixin`, and this model will lose the ability to call `generate` and other related functions.
+  - If you're using `trust_remote_code=True`, you can get rid of this warning by loading the model with an auto class. See https://huggingface.co/docs/transformers/en/model_doc/auto#auto-classes
+  - If you are the owner of the model architecture code, please modify your model class such that it inherits from `GenerationMixin` (after `PreTrainedModel`, otherwise you'll get an exception).
+  - If you are not the owner of the model architecture class, please contact the model code owner to update it.
+bash: line 48:  2737 Killed                  python -c "
+from configuration_io import IoConfig
+from modeling_io import IoForCausalLM
+import torch
+
+print('=== Test 1: Model creation ===')
+cfg = IoConfig(vocab_size=50257, d_model=256, n_heads=4, n_layers=6, max_seq_len=256, dropout=0.1, lattice_depth=64, max_horizon=8)
+model = IoForCausalLM(cfg)
+
+print('=== Test 2: Forward pass with labels ===')
+x = torch.randint(0, 50257, (2, 256))
+out = model(input_ids=x, use_cache=False, labels=x)
+print('Loss:', out.loss.item())
+print('Loss is finite:', torch.isfinite(out.loss).item())
+
+print('=== Test 3: Training step ===')
+from trainer_utils import setup_muon_adamw
+opt = setup_muon_adamw(model, 8e-4)
+model.train()
+out = model(input_ids=x, use_cache=False, labels=x)
+loss = out.loss
+print('Loss before backward:', loss.item())
+loss.backward()
+torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+opt.step()
+opt.zero_grad(set_to_none=True)
+
+# Second step
+out2 = model(input_ids=x, use_cache=False, labels=x)
+print('Loss after 1 step:', out2.loss.item())
+
+print('=== Test 4: Generate ===')
+model.eval()
+ids = torch.tensor([[1,2,3]])
+out_ids = model.generate(ids, max_new_tokens=5, temperature=0.85)
+print('Generated IDs:', out_ids[0].tolist())
+
+print('=== Test 5: save/load ===')
+model.save_pretrained('/tmp/test_io3')
+m2 = IoForCausalLM.from_pretrained('/tmp/test_io3')
+print('Save/load OK')
+
+print('=== ALL TESTS PASSED ===')
+" 2>&1

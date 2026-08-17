@@ -1,0 +1,6 @@
+torch
+gradio==4.36.1
+tiktoken
+datasets
+transformers
+huggingface_hub<1.0

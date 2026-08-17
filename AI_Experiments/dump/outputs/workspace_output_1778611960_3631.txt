@@ -1,0 +1,14 @@
+abs_emb has NaN: False
+abs_emb min/max: -1.0 1.0
+spine: tensor([  0.,   2.,   6.,  14.,  34.,  82., 198.])
+diffs shape: torch.Size([2, 256, 7])
+diffs has NaN: False
+diffs min/max: -198.0 255.0
+ld has NaN: False
+ld min/max: 0.0 115.0
+rd has NaN: False
+rd min/max: 1.0 inf
+rank has NaN: False
+stacked has NaN: False
+rel_net output has NaN: True
+rel_net output min/max: nan nan

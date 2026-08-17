@@ -1,0 +1,7 @@
+torch
+gradio
+tiktoken
+datasets
+transformers
+huggingface_hub<1.0
+pydantic==2.10.6

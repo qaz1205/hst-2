@@ -1,0 +1,354 @@
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from transformers import PreTrainedModel
+from transformers.modeling_outputs import CausalLMOutputWithPast
+import math
+from typing import Optional, Tuple, List, Callable, Any, Dict
+from collections import deque
+from configuration_io import IoConfig
+
+# ----- CIF Primitives -----
+class _CIF:
+    __slots__ = ("value", "cache")
+    def __init__(self, v): 
+        self.value = v
+        self.cache = None
+
+class Affirm(_CIF):
+    def test(self, fn: Callable[[Any], bool]) -> bool: return fn(self.value)
+    def flip(self) -> 'Deny': return Deny(self.value)
+
+class Deny(_CIF):
+    def test(self, fn: Callable[[Any], bool]) -> bool:
+        if self.cache is None: self.cache = not fn(self.value)
+        return self.cache
+    def flip(self) -> 'Affirm': return Affirm(self.value)
+
+class CIFScalar:
+    __slots__ = ("_fn", "_val", "_computed")
+    def __init__(self, fn: Callable): self._fn, self._val, self._computed = fn, None, False
+    def get(self):
+        if not self._computed: self._val = self._fn(); self._computed = True
+        return self._val
+
+class CIFState:
+    def __init__(self, value, initial_deny=True):
+        self._s = Deny(value) if initial_deny else Affirm(value)
+        self._val = value
+    def test(self, fn): return self._s.test(fn)
+    def set_dynamic(self): self._s = Affirm(self._val)
+    def set_static(self): self._s = Deny(self._val)
+
+class CIFRegistry:
+    def __init__(self, cfg: IoConfig):
+        c = cfg
+        self.head_dim      = CIFScalar(lambda: c.d_model // c.n_heads)
+        self.attn_scale    = CIFScalar(lambda: 1.0 / math.sqrt(c.d_model // c.n_heads))
+        self.log_vocab     = CIFScalar(lambda: math.log(c.vocab_size))
+        self.lm_weight     = CIFScalar(lambda: 1.0)
+        self.hor_weight    = CIFScalar(lambda: 0.45)
+        self.unc_weight    = CIFScalar(lambda: 0.08)
+        self.exit_thresh   = CIFScalar(lambda: c.exit_threshold)
+        self.fb_iters      = CIFScalar(lambda: c.fb_iterations)
+        self.block_size    = CIFScalar(lambda: 16)
+        self.d_model_x2    = CIFScalar(lambda: c.d_model * 2)
+        self.d_model_x3    = CIFScalar(lambda: c.d_model * 3)
+        self.hebbian_decay = CIFScalar(lambda: c.hebbian_decay)
+
+# ----- Spine & Manifold -----
+def build_spine_sequence(max_len: int) -> List[int]:
+    s = [0, 2, 6]
+    while True:
+        nxt = 2 * s[-1] + s[-2]
+        if nxt >= max_len: break
+        s.append(nxt)
+    return s
+
+class SpineAnalyzer:
+    def __init__(self, max_seq_len: int):
+        self.spine = build_spine_sequence(max_seq_len)
+        self.spine_idx = {v: i for i, v in enumerate(self.spine)}
+        self._cache: Dict[int, dict] = {}
+        self._precompute()
+
+    def _get_ancestors(self, pos: int) -> List[int]:
+        if pos not in self.spine_idx:
+            prev = [s for s in self.spine if s < pos]
+            return [prev[-1]] if prev else []
+        idx = self.spine_idx[pos]
+        return [self.spine[i] for i in [idx-1, idx-2, idx-3] if i >= 0]
+
+    def _precompute(self):
+        for pos in self.spine:
+            levels, visited = {0: [pos]}, {pos}
+            queue_bfs = deque([(pos, 0)])
+            path_counts = {pos: 1}
+            while queue_bfs:
+                curr, lvl = queue_bfs.popleft()
+                if lvl >= 6: continue
+                for a in self._get_ancestors(curr):
+                    if lvl+1 not in levels: levels[lvl+1] = []
+                    if a not in levels[lvl+1]: levels[lvl+1].append(a)
+                    path_counts[a] = path_counts.get(a, 0) + path_counts[curr]
+                    if a not in visited:
+                        visited.add(a)
+                        queue_bfs.append((a, lvl + 1))
+            self._cache[pos] = {"levels": levels, "path_counts": path_counts, "max_depth": max(levels.keys()) if levels else 0}
+
+    def get_structure(self, pos: int) -> dict: return self._cache.get(pos, self._cache[0])
+
+class HyperbolicEmbedding(nn.Module):
+    def __init__(self, vocab_size: int, d_model: int, curvature: float = 1.0):
+        super().__init__()
+        self.c, self.emb = curvature, nn.Embedding(vocab_size, d_model)
+        nn.init.normal_(self.emb.weight, mean=0, std=0.01)
+        
+    def forward(self, ids: torch.Tensor) -> torch.Tensor:
+        x = self.emb(ids)
+        norm = x.norm(dim=-1, keepdim=True)
+        max_norm = (1 - 1e-5) / math.sqrt(self.c)
+        cond = norm > max_norm
+        projected = x * (max_norm / (norm + 1e-9))
+        return torch.where(cond, projected, x)
+
+class LatticePositionalEncoding(nn.Module):
+    def __init__(self, d_model: int, max_seq_len: int):
+        super().__init__()
+        inv_freq = 1.0 / (10000 ** (torch.arange(0, d_model, 2).float() / d_model))
+        t = torch.arange(max_seq_len).float()
+        sinusoid = torch.einsum("i,j->ij", t, inv_freq)
+        self.register_buffer("abs_pe", torch.cat([sinusoid.sin(), sinusoid.cos()], dim=-1))
+        self.spine = torch.tensor(build_spine_sequence(max_seq_len)).float()
+        self.rel_net = nn.Sequential(nn.Linear(3, d_model // 4), nn.LayerNorm(d_model // 4), nn.GELU(), nn.Linear(d_model // 4, d_model))
+
+    def forward(self, positions: torch.Tensor) -> torch.Tensor:
+        abs_emb = self.abs_pe[positions.long()]
+        sp = self.spine.to(positions.device)
+        diffs = positions.float().unsqueeze(-1) - sp
+        ld = torch.where(diffs >= 0, diffs, torch.inf).min(dim=-1)[0]
+        rd = torch.where(diffs < 0, -diffs, torch.inf).min(dim=-1)[0]
+        rank = (diffs >= 0).sum(dim=-1).float()
+        return abs_emb + self.rel_net(torch.stack([ld, rd, rank], dim=-1))
+
+class PagedKVCache:
+    def __init__(self, n_heads: int, head_dim: int, cif: CIFRegistry, device: str):
+        self.nh, self.hd, self.bs, self.dev = n_heads, head_dim, cif.block_size.get(), device
+        self.k_blocks, self.v_blocks, self.pos = [], [], 0
+        self.alloc_state = CIFState(self, initial_deny=False)
+
+    def append(self, k: torch.Tensor, v: torch.Tensor):
+        seq_len = k.size(2)
+        if self.alloc_state.test(lambda s: not s.k_blocks or s.k_blocks[-1].size(2) >= s.bs):
+            self.k_blocks.append(torch.zeros(1, self.nh, self.bs, self.hd, device=self.dev))
+            self.v_blocks.append(torch.zeros(1, self.nh, self.bs, self.hd, device=self.dev))
+            self.alloc_state.set_static()
+        idx = self.pos % self.bs
+        self.k_blocks[-1][:, :, idx:idx+seq_len, :] = k
+        self.v_blocks[-1][:, :, idx:idx+seq_len, :] = v
+        self.pos += seq_len
+        if self.pos % self.bs == 0: self.alloc_state.set_dynamic()
+
+    def get_context(self) -> Tuple[torch.Tensor, torch.Tensor]:
+        if not self.k_blocks: return None, None
+        return torch.cat(self.k_blocks, dim=2)[:, :, :self.pos, :], torch.cat(self.v_blocks, dim=2)[:, :, :self.pos, :]
+
+class FlashBlockSparseAttention(nn.Module):
+    def __init__(self, d_model: int, n_heads: int, cif: CIFRegistry, dropout: float = 0.1):
+        super().__init__()
+        self.nh, self.hd, self.scale, self.cif = n_heads, cif.head_dim.get(), cif.attn_scale.get(), cif
+        self.qkv_proj = nn.Linear(d_model, d_model * 3, bias=False)
+        self.out_proj = nn.Linear(d_model, d_model, bias=False)
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, x: torch.Tensor, cache: Optional[PagedKVCache] = None) -> Tuple[torch.Tensor, PagedKVCache]:
+        B, S, D = x.shape
+        qkv = self.qkv_proj(x).view(B, S, 3, self.nh, self.hd).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]
+        if cache is not None:
+            cache.append(k, v)
+            k, v = cache.get_context()
+            
+        is_causal = (cache is None) or (S > 1)
+        if hasattr(F, 'scaled_dot_product_attention'):
+            attn_out = F.scaled_dot_product_attention(q, k, v, is_causal=is_causal)
+        else:
+            attn = (q @ k.transpose(-2, -1)) * self.scale
+            if is_causal:
+                mask = torch.triu(torch.ones(S, k.size(2), device=x.device), diagonal=k.size(2)-S+1)
+                attn.masked_fill_(mask.bool(), float('-inf'))
+            attn_out = attn.softmax(dim=-1) @ v
+        return self.out_proj(attn_out.transpose(1, 2).contiguous().view(B, S, D)), cache
+
+class DiamondMixer(nn.Module):
+    def __init__(self, d_model: int, cif: CIFRegistry):
+        super().__init__()
+        self.up = nn.Linear(d_model, cif.d_model_x2.get())
+        self.down = nn.Linear(cif.d_model_x2.get(), d_model)
+        self.norm = nn.LayerNorm(d_model)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        a, b = self.up(self.norm(x)).chunk(2, dim=-1)
+        return x + self.down(torch.cat([F.gelu(a + b) * torch.tanh(a - b), F.silu(b)], dim=-1))
+
+class FeedbackLoop(nn.Module):
+    def __init__(self, d_model: int, cif: CIFRegistry):
+        super().__init__()
+        self.cif, self.gru, self.gate = cif, nn.GRUCell(d_model, d_model), nn.Linear(d_model, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, S, D = x.shape
+        h = x.reshape(-1, D)
+        for _ in range(self.cif.fb_iters.get()):
+            g = torch.sigmoid(self.gate(h))
+            h = (1 - g) * h + g * self.gru(h.clone(), h.clone())
+        return h.view(B, S, D)
+
+class CompleteLatticeProcessor(nn.Module):
+    def __init__(self, d_model: int, analyzer: SpineAnalyzer, cif: CIFRegistry):
+        super().__init__()
+        self.analyzer, self.cif = analyzer, cif
+        self.fuse_layer = nn.Sequential(nn.Linear(cif.d_model_x2.get(), d_model), nn.LayerNorm(d_model), nn.GELU())
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        B, S, D = x.shape
+        updates = torch.zeros_like(x)
+        for pos in self.analyzer.spine:
+            if pos >= S: continue
+            meta = self.analyzer.get_structure(pos)
+            ancestors = [a for a in meta['levels'].get(1, []) if a < S]
+            if not ancestors: continue
+            weights = F.softmax(torch.tensor([meta['path_counts'].get(a, 1.0) for a in ancestors], device=x.device).float(), dim=0)
+            agg_context = (torch.stack([x[:, a, :] for a in ancestors], dim=1) * weights.view(1, -1, 1)).sum(dim=1)
+            updates[:, pos, :] = self.fuse_layer(torch.cat([x[:, pos, :], agg_context], dim=-1))
+        return x + updates
+
+class HebbianFastWeights(nn.Module):
+    def __init__(self, d_model: int, cif: CIFRegistry):
+        super().__init__()
+        self.cif = cif
+        self.q_proj = nn.Linear(d_model, max(1, d_model // 4), bias=False)
+        self.kv_proj = nn.Linear(d_model, max(2, d_model // 2), bias=False)
+        self.out_proj = nn.Linear(max(1, d_model // 4), d_model)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        k, v = self.kv_proj(x).chunk(2, dim=-1)
+        assoc_mem = torch.einsum("bsd,bse->bde", v, k) * self.cif.hebbian_decay.get()
+        return x + self.out_proj(torch.einsum("bsd,bde->bse", self.q_proj(x), assoc_mem))
+
+class SpeculativeHorizon(nn.Module):
+    def __init__(self, d_model: int, vocab_size: int, max_h: int):
+        super().__init__()
+        self.max_h = max_h
+        self.unc_predictor = nn.Sequential(nn.Linear(d_model, max(1, d_model // 8)), nn.GELU(), nn.Linear(max(1, d_model // 8), 1), nn.Sigmoid())
+        near_experts = min(4, max_h)
+        far_experts = max(0, max_h - near_experts)
+        self.near = nn.ModuleList([nn.Linear(d_model, vocab_size) for _ in range(near_experts)])
+        self.far = nn.Sequential(nn.Linear(d_model, d_model), nn.ReLU(), nn.Linear(d_model, vocab_size * far_experts)) if far_experts > 0 else None
+
+    def forward(self, h: torch.Tensor):
+        ht = h[:, -1, :]
+        unc = self.unc_predictor(ht)
+        h_len = (self.max_h * (1.0 - unc)).long().clamp(2, self.max_h)
+        drafts = [head(ht) for head in self.near]
+        if self.far: drafts.append(self.far(ht).view(h.size(0), self.max_h - len(self.near), -1))
+        return torch.cat([d.unsqueeze(1) if d.dim() == 2 else d for d in drafts], dim=1), h_len, unc
+
+class AdaptiveBlock(nn.Module):
+    def __init__(self, d_model: int, n_heads: int, cif: CIFRegistry):
+        super().__init__()
+        self.cif, self.attn, self.mixer = cif, FlashBlockSparseAttention(d_model, n_heads, cif), DiamondMixer(d_model, cif)
+        self.norm1, self.norm2 = nn.LayerNorm(d_model), nn.LayerNorm(d_model)
+        self.confidence_gate = nn.Sequential(nn.Linear(d_model, 1), nn.Sigmoid())
+
+    def forward(self, x: torch.Tensor, cache: Optional[PagedKVCache] = None):
+        a_res, next_cache = self.attn(self.norm1(x), cache)
+        x = x + self.mixer(self.norm2(x + a_res))
+        conf = self.confidence_gate(x[:, -1, :]).mean()
+        stop = self.cif.exit_thresh.test(lambda t: conf.item() > t)
+        return x, next_cache, stop, conf
+
+# ----- HuggingFace Compatible Model Wrapper -----
+class IoPreTrainedModel(PreTrainedModel):
+    config_class = IoConfig
+    base_model_prefix = "io"
+
+class IoModel(IoPreTrainedModel):
+    def __init__(self, config: IoConfig):
+        super().__init__(config)
+        self.cif = CIFRegistry(config)
+        self.analyzer = SpineAnalyzer(config.max_seq_len)
+        self.embedding = HyperbolicEmbedding(config.vocab_size, config.d_model)
+        self.pos_enc   = LatticePositionalEncoding(config.d_model, config.max_seq_len)
+        self.lattice   = CompleteLatticeProcessor(config.d_model, self.analyzer, self.cif)
+        self.layers    = nn.ModuleList([AdaptiveBlock(config.d_model, config.n_heads, self.cif) for _ in range(config.n_layers)])
+        self.feedback  = FeedbackLoop(config.d_model, self.cif)
+        self.hebbian   = HebbianFastWeights(config.d_model, self.cif)
+        self.norm_out  = nn.LayerNorm(config.d_model)
+        self.post_init()
+
+    def forward(self, input_ids: torch.Tensor, past_key_values: Optional[List[PagedKVCache]] = None, use_cache: bool = False, training: bool = True):
+        B, S = input_ids.shape
+        p_offset = past_key_values[0].pos if past_key_values else 0
+        x = self.embedding(input_ids) + self.pos_enc(torch.arange(p_offset, p_offset+S, device=input_ids.device).unsqueeze(0).expand(B,-1))
+        x = self.lattice(x)
+        
+        new_caches = []
+        for i, layer in enumerate(self.layers):
+            x, nc, skip, _ = layer(x, past_key_values[i] if past_key_values else None)
+            if use_cache: new_caches.append(nc)
+            if not training and skip and S == 1: break
+            
+        x = self.feedback(x)
+        if not training: x = self.hebbian(x)
+        h = self.norm_out(x)
+        return h, new_caches if use_cache else None
+
+class IoForCausalLM(IoPreTrainedModel):
+    def __init__(self, config: IoConfig):
+        super().__init__(config)
+        self.model = IoModel(config)
+        self.lm_head = nn.Linear(config.d_model, config.vocab_size, bias=False)
+        self.horizon = SpeculativeHorizon(config.d_model, config.vocab_size, config.max_horizon)
+        self.post_init()
+
+    def get_input_embeddings(self): return self.model.embedding.emb
+    def set_input_embeddings(self, value): self.model.embedding.emb = value
+
+    def forward(self, input_ids: torch.Tensor, past_key_values: Optional[List[PagedKVCache]] = None, use_cache: bool = False, labels: Optional[torch.Tensor] = None):
+        h, caches = self.model(input_ids, past_key_values, use_cache, training=(labels is not None))
+        logits = self.lm_head(h)
+        drafts, h_len, unc = self.horizon(h)
+        
+        loss = None
+        if labels is not None:
+            loss_lm = F.cross_entropy(logits.view(-1, self.config.vocab_size), labels.view(-1))
+            hl = min(drafts.shape[1], labels.shape[1])
+            loss_h = F.cross_entropy(drafts[:, :hl, :].reshape(-1, self.config.vocab_size), labels[:, :hl].reshape(-1)) if hl > 0 else torch.tensor(0.0, device=logits.device)
+            loss = self.model.cif.lm_weight.get() * loss_lm + self.model.cif.hor_weight.get() * loss_h + self.model.cif.unc_weight.get() * unc.mean()
+
+        return CausalLMOutputWithPast(loss=loss, logits=logits, past_key_values=caches)
+    
+    @torch.no_grad()
+    def generate_draft(self, input_ids: torch.Tensor, max_new_tokens: int = 50, temperature: float = 0.85):
+        self.eval()
+        B, S = input_ids.shape
+        device = input_ids.device
+        caches = [PagedKVCache(self.config.n_heads, self.model.cif.head_dim.get(), self.model.cif, device) for _ in range(self.config.n_layers)]
+        
+        output_tokens = input_ids[0].tolist()
+        curr_ids = input_ids
+        
+        for _ in range(max_new_tokens):
+            h, caches = self.model(curr_ids, past_key_values=caches, use_cache=True, training=False)
+            drafts, _, _ = self.horizon(h)
+            
+            draft_logits = drafts[:, 0, :] / max(temperature, 1e-4) # Top-1 draft
+            next_token = torch.multinomial(F.softmax(draft_logits, dim=-1), 1)
+            token_val = next_token.item()
+            output_tokens.append(token_val)
+            
+            if token_val == self.config.eos_token_id: break
+            curr_ids = next_token
+            
+        return output_tokens

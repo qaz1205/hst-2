@@ -1,0 +1,29 @@
+IoForCausalLM has generative capabilities, as `prepare_inputs_for_generation` is explicitly defined. However, it doesn't directly inherit from `GenerationMixin`. From 👉v4.50👈 onwards, `PreTrainedModel` will NOT inherit from `GenerationMixin`, and this model will lose the ability to call `generate` and other related functions.
+  - If you're using `trust_remote_code=True`, you can get rid of this warning by loading the model with an auto class. See https://huggingface.co/docs/transformers/en/model_doc/auto#auto-classes
+  - If you are the owner of the model architecture code, please modify your model class such that it inherits from `GenerationMixin` (after `PreTrainedModel`, otherwise you'll get an exception).
+  - If you are not the owner of the model architecture class, please contact the model code owner to update it.
+IoModel has generative capabilities, as `prepare_inputs_for_generation` is explicitly defined. However, it doesn't directly inherit from `GenerationMixin`. From 👉v4.50👈 onwards, `PreTrainedModel` will NOT inherit from `GenerationMixin`, and this model will lose the ability to call `generate` and other related functions.
+  - If you're using `trust_remote_code=True`, you can get rid of this warning by loading the model with an auto class. See https://huggingface.co/docs/transformers/en/model_doc/auto#auto-classes
+  - If you are the owner of the model architecture code, please modify your model class such that it inherits from `GenerationMixin` (after `PreTrainedModel`, otherwise you'll get an exception).
+  - If you are not the owner of the model architecture class, please contact the model code owner to update it.
+bash: line 25:  2987 Killed                  python -c "
+from configuration_io import IoConfig
+from modeling_io import IoForCausalLM
+from trainer_utils import setup_muon_adamw
+import torch, time
+cfg = IoConfig(vocab_size=50257, d_model=256, n_heads=4, n_layers=6, max_seq_len=256, dropout=0.1, lattice_depth=64, max_horizon=8)
+model = IoForCausalLM(cfg)
+opt = setup_muon_adamw(model, 8e-4)
+model.train()
+x = torch.randint(0, 50257, (1, 64))
+for step in range(1, 4):
+    t0 = time.time()
+    out = model(input_ids=x, use_cache=False, labels=x)
+    loss = out.loss
+    loss.backward()
+    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+    opt.step()
+    opt.zero_grad(set_to_none=True)
+    t1 = time.time()
+    print(f'Step {step}: Loss={loss.item():.4f} Time={t1-t0:.2f}s')
+" 2>&1

@@ -1,0 +1,15 @@
+=== PreTrainedModel required methods ===
+_init_weights in PreTrainedModel: True
+
+=== IoForCausalLM.forward signature ===
+(input_ids: torch.Tensor, past_key_values: Optional[List[modeling_io.PagedKVCache]] = None, use_cache: bool = False, labels: Optional[torch.Tensor] = None)
+
+=== IoModel.forward signature ===
+(input_ids: torch.Tensor, past_key_values: Optional[List[modeling_io.PagedKVCache]] = None, use_cache: bool = False, training: bool = True)
+
+=== PreTrainedModel.forward signature ===
+(self, *input: Any) -> None
+
+=== Has generate method? ===
+generate in IoForCausalLM: False
+generate_draft in IoForCausalLM: True
